@@ -9,14 +9,14 @@ using System.Runtime.Loader;
 
 const string baseAddress = "http://localhost:666/";
 
-string projectFilePath = @"..\..\..\..\WebApplication1\WebApplication1.csproj";
+string projectPath = @"..\..\..\..\WebApplication1\WebApplication1.csproj";
 
 MSBuildLocator.RegisterDefaults();
 
 using MSBuildWorkspace projectfiles = MSBuildWorkspace.Create();
 
 Project project = await projectfiles
-    .OpenProjectAsync(projectFilePath);
+    .OpenProjectAsync(projectPath);
 
 Compilation compilation = await project.GetCompilationAsync() 
     ?? throw new Exception("Did not compile");
@@ -69,19 +69,17 @@ try
 
     response.EnsureSuccessStatusCode();
 
-    string responseS = await response.Content.ReadAsStringAsync();
+    string content = await response.Content.ReadAsStringAsync();
 
-    Console.WriteLine(responseS);
-
+    Console.WriteLine(content);
 }
 catch (Exception ex)
 {
     Console.WriteLine($"Error: {ex.Message}");
-    if (ex.InnerException != null)
-    {
+    if (ex.InnerException is not null)
         Console.WriteLine($"Inner Exception: {ex.InnerException.Message}");
-    }
 }
+
 Console.WriteLine("Done, press any key to continue.");
 Console.ReadKey();
 
