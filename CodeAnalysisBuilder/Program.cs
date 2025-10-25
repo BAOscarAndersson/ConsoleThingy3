@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.MSBuild;
+using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.Loader;
 
@@ -13,11 +14,11 @@ using MSBuildWorkspace projectfiles = MSBuildWorkspace.Create();
 Project project = await projectfiles
     .OpenProjectAsync(@"..\..\..\..\WebApplication1\WebApplication1.csproj");
 
-Compilation? compilation = await project.GetCompilationAsync();
+Compilation compilation = await project.GetCompilationAsync() 
+    ?? throw new Exception("Did not compile");
 
-if (compilation is null) throw new Exception();
-
-System.Collections.Immutable.ImmutableArray<Diagnostic> diagnostics = compilation.GetDiagnostics();
+ImmutableArray<Diagnostic> diagnostics = compilation
+    .GetDiagnostics();
 
 if (diagnostics.Any(x => x.Severity == DiagnosticSeverity.Error))
     throw new Exception("Could not compile.");
