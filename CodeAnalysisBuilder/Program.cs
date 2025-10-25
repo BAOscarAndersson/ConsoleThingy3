@@ -1,6 +1,7 @@
 ﻿using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.MSBuild;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -16,30 +17,16 @@ Compilation? compilation = await project.GetCompilationAsync();
 
 if (compilation is null) throw new Exception();
 
-var diagnostics = compilation.GetDiagnostics();
+System.Collections.Immutable.ImmutableArray<Diagnostic> diagnostics = compilation.GetDiagnostics();
 
-foreach (Diagnostic diagnostic in diagnostics)
-    Console.WriteLine(diagnostic);
+if (diagnostics.Any(x => x.Severity == DiagnosticSeverity.Error))
+    throw new Exception("Could not compile.");
 
-var mrefs = compilation.References.ToArray();
-
-IEnumerable<SyntaxTree> syntaxTrees = project
-    .Documents
-    .Select(x =>
-    {
-        _ = x.TryGetSyntaxTree(out var t);
-
-        return t;
-    })
-    .Where(x => x is not null)
-    .Select(x => x!);
+MetadataReference[] mrefs = compilation.References.ToArray();
 
 using MemoryStream ms = new();
 
-var compiled = CSharpCompilation
-    .Create("IdkAgain", syntaxTrees, mrefs);
-
-var r = compiled.Emit(ms);
+EmitResult r = compilation.Emit(ms);
 
 if (!r.Success)
     throw new Exception("Failed to emit.");
@@ -50,20 +37,20 @@ ms.Seek(0, SeekOrigin.Begin);
 Dictionary<string, string> assemblyPaths = mrefs
     .OfType<PortableExecutableReference>()
     .Where(r => !string.IsNullOrEmpty(r.FilePath))
-    .GroupBy(r => Path.GetFileNameWithoutExtension(r.FilePath))
-    .ToDictionary(g => g.Key!, g => g.First().FilePath ?? "");
+    .Select(ReferenceWithImplementationPath)
+    .ToDictionary();
 
-var assemblyContext = new AssemblyLoadContext("Idk");
+AssemblyLoadContext assemblyContext = new("Idk");
 assemblyContext.Resolving += Resolver;
 
 try
 {
-    var l = assemblyContext.LoadFromStream(ms);
-    var t = l.EntryPoint!;
-    object[] margs = new object[1];
-    string[] ma = [""];
-    margs[0] = ma;
-    var main = t.Invoke(null, margs);
+    var task = Task.Run(() =>
+    assemblyContext
+        .LoadFromStream(ms)
+        .EntryPoint!
+        .Invoke(null, NoArguments()));
+
 }
 catch (Exception ex)
 {
@@ -78,24 +65,26 @@ Console.ReadKey();
 
 Assembly? Resolver(AssemblyLoadContext context, AssemblyName assemblyName)
 {
-    try
-    {
-        if (assemblyPaths.TryGetValue(assemblyName.Name!, out var path))
-            return LoadAssembly(context, path);
-        else
-            return context.LoadFromAssemblyName(assemblyName);
-    }
-    catch
-    {
-        Console.WriteLine($"It is all hecked!");
+    if (assemblyPaths.TryGetValue(assemblyName.Name!, out string? path))
+        return context.LoadFromAssemblyPath(path);
+    else
         return null;
-    }
 }
 
-static Assembly LoadAssembly(AssemblyLoadContext context, string path)
+static (string, string) ReferenceWithImplementationPath(PortableExecutableReference reference)
+{
+    string name = Path
+        .GetFileNameWithoutExtension(reference.FilePath) ?? "";
+
+    string runtimePathOf = RuntimePath(reference.FilePath ?? "");
+
+    return (name, runtimePathOf);
+}
+
+static string RuntimePath(string path)
 {
     // Convert reference assembly path to runtime assembly path
-    var runtimePath = path
+    string runtimePath = path
         .Replace(@"\packs\Microsoft.AspNetCore.App.Ref\",
                  @"\shared\Microsoft.AspNetCore.App\")
         .Replace(@"\packs\Microsoft.NETCore.App.Ref\",
@@ -103,13 +92,16 @@ static Assembly LoadAssembly(AssemblyLoadContext context, string path)
         .Replace(@"\ref\net9.0\",
                  @"\");
 
-    return context.LoadFromAssemblyPath(GetPath(path, runtimePath));
-}
-
-static string GetPath(string path, string runtimePath)
-{
     if (File.Exists(runtimePath))
         return runtimePath;
     else
         return path;
+}
+
+static object[] NoArguments()
+{
+    object[] margs = new object[1];
+    string[] ma = [""];
+    margs[0] = ma;
+    return margs;
 }
