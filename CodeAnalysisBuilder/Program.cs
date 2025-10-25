@@ -7,12 +7,16 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.Loader;
 
+const string baseAddress = "http://localhost:666/";
+
+string projectFilePath = @"..\..\..\..\WebApplication1\WebApplication1.csproj";
+
 MSBuildLocator.RegisterDefaults();
 
 using MSBuildWorkspace projectfiles = MSBuildWorkspace.Create();
 
 Project project = await projectfiles
-    .OpenProjectAsync(@"..\..\..\..\WebApplication1\WebApplication1.csproj");
+    .OpenProjectAsync(projectFilePath);
 
 Compilation compilation = await project.GetCompilationAsync() 
     ?? throw new Exception("Did not compile");
@@ -29,28 +33,45 @@ using MemoryStream ms = new();
 
 EmitResult r = compilation.Emit(ms);
 
-if (!r.Success)
-    throw new Exception("Failed to emit.");
+if (!r.Success) throw new Exception("Failed to emit.");
 
 ms.Seek(0, SeekOrigin.Begin);
 
-// Create a dictionary for fast assembly lookup
-Dictionary<string, string> assemblyPaths = mrefs
+/* Manually convert reference assemblies to implementation assemblies.
+   Compilation needs to be done against the reference so we need to
+   change them during assembly resolution.*/
+Dictionary<string, string> implementingAssemblies = mrefs
     .OfType<PortableExecutableReference>()
     .Where(r => !string.IsNullOrEmpty(r.FilePath))
     .Select(ReferenceWithImplementationPath)
     .ToDictionary();
 
 AssemblyLoadContext assemblyContext = new("Idk");
+
 assemblyContext.Resolving += Resolver;
 
 try
 {
-    var task = Task.Run(() =>
+    _ = Task.Run(() =>
     assemblyContext
         .LoadFromStream(ms)
         .EntryPoint!
-        .Invoke(null, NoArguments()));
+        .Invoke(null, WithUrls()));
+
+    HttpClient client = new()
+    {
+        BaseAddress = new Uri(baseAddress)
+    };
+
+    await Task.Delay(1555); // Make sure the server has started.
+
+    HttpResponseMessage response = await client.GetAsync("hello");
+
+    response.EnsureSuccessStatusCode();
+
+    string responseS = await response.Content.ReadAsStringAsync();
+
+    Console.WriteLine(responseS);
 
 }
 catch (Exception ex)
@@ -66,23 +87,24 @@ Console.ReadKey();
 
 Assembly? Resolver(AssemblyLoadContext context, AssemblyName assemblyName)
 {
-    if (assemblyPaths.TryGetValue(assemblyName.Name!, out string? path))
+    if (implementingAssemblies.TryGetValue(assemblyName.Name!, out string? path))
         return context.LoadFromAssemblyPath(path);
     else
         return null;
 }
 
-static (string, string) ReferenceWithImplementationPath(PortableExecutableReference reference)
+static (string, string) ReferenceWithImplementationPath(
+    PortableExecutableReference reference)
 {
     string name = Path
         .GetFileNameWithoutExtension(reference.FilePath) ?? "";
 
-    string runtimePathOf = RuntimePath(reference.FilePath ?? "");
+    string implementationPath = ImplementationPath(reference.FilePath ?? "");
 
-    return (name, runtimePathOf);
+    return (name, implementationPath);
 }
 
-static string RuntimePath(string path)
+static string ImplementationPath(string path)
 {
     // Convert reference assembly path to runtime assembly path
     string runtimePath = path
@@ -99,10 +121,10 @@ static string RuntimePath(string path)
         return path;
 }
 
-static object[] NoArguments()
+static object[] WithUrls()
 {
     object[] margs = new object[1];
-    string[] ma = [""];
+    string[] ma = [$"--urls={baseAddress}"];
     margs[0] = ma;
     return margs;
 }
