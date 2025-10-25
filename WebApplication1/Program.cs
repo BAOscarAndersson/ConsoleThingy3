@@ -1,4 +1,4 @@
-var app = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder(args).Build();
+var app = WebApplication.CreateBuilder(args).Build();
 
 app.MapGet("hello", () => "world");
 
